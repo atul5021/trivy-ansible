@@ -1,0 +1,1 @@
+print("Testing SonarQube Scanner")
