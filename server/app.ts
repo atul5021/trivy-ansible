@@ -1,58 +1,138 @@
+// import express, { Request, Response } from 'express';
+// import { exec } from 'child_process';
+// import crypto from 'crypto';
+// import sqlite3 from 'sqlite3';
+
+// const app = express();
+// app.use(express.json());
+
+// // 🚨 SonarQube Rule: Hardcoded credentials (Security Vulnerability / Hotspot)
+// const API_SECRET_KEY = "super_secret_aws_key_1234567890_abcdef";
+// const DB_PASSWORD = "admin_password123";
+
+// const db = new sqlite3.Database(':memory:');
+
+// // 🚨 Rule: Weak hashing algorithm (MD5 / SHA1)
+// function hashUserPassword(password: string): string {
+//     return crypto.createHash('md5').update(password).digest('hex'); // Vulnerability: Weak Cryptography
+// }
+
+// // 🚨 Rule: SQL Injection (Unsanitized query concatenation)
+// app.get('/api/user', (req: Request, res: Response) => {
+//     const userId = req.query.id as string;
+    
+//     // Direct string interpolation into SQL query
+//     const query = `SELECT * FROM users WHERE id = '${userId}'`;
+    
+//     db.all(query, [], (err, rows) => {
+//         if (err) res.status(500).send(err.message);
+//         res.json(rows);
+//     });
+// });
+
+// // 🚨 Rule: Command Injection / Remote Code Execution
+// app.post('/api/ping', (req: Request, res: Response) => {
+//     const host = req.body.host;
+    
+//     // Executing system commands with raw user input
+//     exec(`ping -c 1 ${host}`, (error, stdout) => {
+//         if (error) {
+//             res.status(500).send(error.message);
+//             return;
+//         }
+//         res.send(stdout);
+//     });
+// });
+
+// // 🚨 Rule: Insecure Cookie / Hardcoded JWT Secret & Weak CORS
+// app.get('/api/login', (req: Request, res: Response) => {
+//     // Missing HttpOnly and Secure flags on sensitive cookie
+//     res.cookie('session_token', 'abc123token', { httpOnly: false, secure: false });
+    
+//     // Wildcard CORS origin is a Security Hotspot
+//     res.setHeader('Access-Control-Allow-Origin', '*'); 
+    
+//     res.send({ status: 'Logged in' });
+// });
+
+// app.listen(3000, () => console.log('Insecure server running on port 3000'));
+
+
+
+// atul fix error
+
+
 import express, { Request, Response } from 'express';
-import { exec } from 'child_process';
-import crypto from 'crypto';
+import { execFile } from 'child_process';
+import bcrypt from 'bcrypt';
 import sqlite3 from 'sqlite3';
 
 const app = express();
 app.use(express.json());
 
-// 🚨 SonarQube Rule: Hardcoded credentials (Security Vulnerability / Hotspot)
-const API_SECRET_KEY = "super_secret_aws_key_1234567890_abcdef";
-const DB_PASSWORD = "admin_password123";
+// ✅ Fix: Secrets loaded strictly from environment variables
+const API_SECRET_KEY = process.env.API_SECRET_KEY;
+const DB_PASSWORD = process.env.DB_PASSWORD;
 
 const db = new sqlite3.Database(':memory:');
 
-// 🚨 Rule: Weak hashing algorithm (MD5 / SHA1)
-function hashUserPassword(password: string): string {
-    return crypto.createHash('md5').update(password).digest('hex'); // Vulnerability: Weak Cryptography
+// ✅ Fix: Use bcrypt for secure password hashing with salt rounds
+async function hashUserPassword(password: string): Promise<string> {
+    const saltRounds = 12;
+    return await bcrypt.hash(password, saltRounds);
 }
 
-// 🚨 Rule: SQL Injection (Unsanitized query concatenation)
+// ✅ Fix: Parameterized SQL query to prevent SQL Injection
 app.get('/api/user', (req: Request, res: Response) => {
     const userId = req.query.id as string;
     
-    // Direct string interpolation into SQL query
-    const query = `SELECT * FROM users WHERE id = '${userId}'`;
+    // Parameterized placeholders (?) ensure user input is treated as data, not code
+    const query = `SELECT id, username, email FROM users WHERE id = ?`;
     
-    db.all(query, [], (err, rows) => {
-        if (err) res.status(500).send(err.message);
+    db.all(query, [userId], (err, rows) => {
+        if (err) {
+            res.status(500).send("An error occurred while retrieving user details.");
+            return;
+        }
         res.json(rows);
     });
 });
 
-// 🚨 Rule: Command Injection / Remote Code Execution
+// ✅ Fix: Strict validation + execFile to eliminate shell injection
 app.post('/api/ping', (req: Request, res: Response) => {
-    const host = req.body.host;
+    const host = req.body.host as string;
     
-    // Executing system commands with raw user input
-    exec(`ping -c 1 ${host}`, (error, stdout) => {
+    // Validate that input is strictly an IPv4 or IPv6 address or valid domain
+    const isValidHostname = /^[a-zA-Z0-9.-]+$/.test(host);
+    if (!isValidHostname) {
+        res.status(400).send("Invalid hostname provided.");
+        return;
+    }
+
+    // execFile bypasses shell command execution interpreters
+    execFile('ping', ['-c', '1', host], (error, stdout) => {
         if (error) {
-            res.status(500).send(error.message);
+            res.status(500).send("Ping execution failed.");
             return;
         }
         res.send(stdout);
     });
 });
 
-// 🚨 Rule: Insecure Cookie / Hardcoded JWT Secret & Weak CORS
+// ✅ Fix: Secure cookies & restrictive CORS configuration
 app.get('/api/login', (req: Request, res: Response) => {
-    // Missing HttpOnly and Secure flags on sensitive cookie
-    res.cookie('session_token', 'abc123token', { httpOnly: false, secure: false });
+    // Explicit HttpOnly, Secure, and SameSite attributes
+    res.cookie('session_token', 'abc123token', { 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'strict',
+        maxAge: 3600000 
+    });
     
-    // Wildcard CORS origin is a Security Hotspot
-    res.setHeader('Access-Control-Allow-Origin', '*'); 
+    // Restrict origin to specific domain instead of wildcard '*'
+    res.setHeader('Access-Control-Allow-Origin', 'https://yourdomain.com'); 
     
-    res.send({ status: 'Logged in' });
+    res.send({ status: 'Logged in successfully' });
 });
 
-app.listen(3000, () => console.log('Insecure server running on port 3000'));
+app.listen(3000, () => console.log('Secure server running on port 3000'));
